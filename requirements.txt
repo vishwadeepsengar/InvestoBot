@@ -1,0 +1,8 @@
+streamlit
+yfinance
+requests
+pandas 
+PyPDF2
+sentence_transformers 
+numpy 
+faiss-cpu
