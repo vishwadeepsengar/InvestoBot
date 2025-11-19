@@ -6,3 +6,6 @@ PyPDF2
 sentence_transformers 
 numpy 
 faiss-cpu
+bs4 
+io
+faiss
