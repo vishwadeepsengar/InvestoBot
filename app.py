@@ -1,24 +1,33 @@
+import os
 import streamlit as st
 import yfinance as yf
-import requests
 import pandas as pd
-import re
-from chatbot import ask_local_gpt4all
-from rag import answer_query, extract_text_from_pdf, chunk_text
 
-from calculators import lumpsum_investment, sip_investment, loan_emi, retirement_corpus
+from dotenv import load_dotenv
+
+from chatbot import ask_groq_deepseek
+from rag import answer_with_rag
+from calculators import (
+    lumpsum_investment,
+    sip_investment,
+    loan_emi,
+    retirement_corpus,
+)
 
 # -------------------------------
-# Streamlit UI setup
+# Basic setup
 # -------------------------------
+load_dotenv()
+
 st.set_page_config(
-    page_title="Investobot Prototype",
+    page_title="InvestoBot Prototype",
     layout="wide",
-    page_icon="💹"
+    page_icon="💹",
 )
 
 # Custom CSS
-st.markdown("""
+st.markdown(
+    """
 <style>
 body {
     background-color: #f5f7fa;
@@ -35,36 +44,56 @@ h1, h2, h3, h4 {
     padding: 10px;
 }
 </style>
-""", unsafe_allow_html=True)
-
-st.sidebar.title("💹 Investobot")
-mode = st.sidebar.radio(
-    "Choose a feature:",
-    ["Chatbot", "Stock Data Lookup", "PDF Q&A", "Smart PDF Q&A", "Finance Calculators"]
+""",
+    unsafe_allow_html=True,
 )
 
+st.sidebar.title("💹 InvestoBot")
+mode = st.sidebar.radio(
+    "Choose a feature:",
+    ["Chatbot", "Stock Data Lookup", "PDF / News Q&A", "Smart PDF / News Q&A", "Finance Calculators"],
+)
+
+st.title("💹 InvestoBot – Personal Finance Assistant")
+
+
 # -------------------------------
-# Chatbot Mode
+# 1️⃣ Chatbot Mode (Groq LLM)
 # -------------------------------
 if mode == "Chatbot":
-    st.header("💬 Finance Chatbot")
+    st.header("💬 Finance Chatbot ")
+
     user_input = st.text_input("Ask me anything about finance or investing:")
+
     if st.button("Ask"):
         if user_input.strip():
             with st.spinner("Thinking..."):
-                reply = ask_local_gpt4all(user_input)
+                # You already have ask_groq_deepseek() in chatbot.py
+                reply = ask_groq_deepseek(
+                    f"""
+You are InvestoBot, a cautious financial education assistant.
+Answer clearly and simply. Always avoid guaranteeing returns.
+At the end, add: "This is general educational information, not investment advice."
+
+User question: {user_input}
+"""
+                )
             st.success(reply)
         else:
             st.warning("Please type a question.")
 
+
 # -------------------------------
-# Stock Data Lookup Mode
+# 2️⃣ Stock Data Lookup Mode
 # -------------------------------
 elif mode == "Stock Data Lookup":
     st.header("📊 Stock Data Lookup")
 
     ticker = st.text_input("Enter stock ticker (e.g., AAPL, TSLA, RELIANCE.BO):")
-    option = st.selectbox("Select data type:", ["Current Price", "Historical Prices", "Dividends", "Market Info"])
+    option = st.selectbox(
+        "Select data type:",
+        ["Current Price", "Historical Prices", "Dividends", "Market Info"],
+    )
 
     if st.button("Get Data"):
         if ticker.strip():
@@ -74,12 +103,17 @@ elif mode == "Stock Data Lookup":
                 if option == "Current Price":
                     price = stock.info.get("currentPrice", None)
                     if price:
-                        st.metric(label=f"{ticker.upper()} Current Price", value=f"${price:.2f}")
+                        st.metric(
+                            label=f"{ticker.upper()} Current Price",
+                            value=f"{price:.2f}",
+                        )
                     else:
                         st.warning("Price data not available.")
 
                 elif option == "Historical Prices":
-                    period = st.selectbox("Select period:", ["1mo", "3mo", "6mo", "1y", "5y"])
+                    period = st.selectbox(
+                        "Select period:", ["1mo", "3mo", "6mo", "1y", "5y"]
+                    )
                     hist = stock.history(period=period)
                     if not hist.empty:
                         st.line_chart(hist["Close"])
@@ -97,105 +131,172 @@ elif mode == "Stock Data Lookup":
 
                 elif option == "Market Info":
                     info = stock.info
-                    st.metric("52 Week High", info.get("fiftyTwoWeekHigh", "N/A"))
-                    st.metric("52 Week Low", info.get("fiftyTwoWeekLow", "N/A"))
-                    st.metric("Volume", info.get("volume", "N/A"))
-                    st.metric("Market Cap", info.get("marketCap", "N/A"))
-                    st.metric("PE Ratio", info.get("trailingPE", "N/A"))
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("52 Week High", info.get("fiftyTwoWeekHigh", "N/A"))
+                        st.metric("Volume", info.get("volume", "N/A"))
+                    with col2:
+                        st.metric("52 Week Low", info.get("fiftyTwoWeekLow", "N/A"))
+                        st.metric("Market Cap", info.get("marketCap", "N/A"))
+                    with col3:
+                        st.metric("PE Ratio", info.get("trailingPE", "N/A"))
 
             except Exception as e:
                 st.error(f"Error fetching stock: {e}")
         else:
             st.warning("Please enter a ticker symbol.")
 
-# -------------------------------
-# PDF Q&A (Direct Retrieval)
-# -------------------------------
-elif mode == "PDF Q&A":
-    st.header("📄 PDF Q&A with RAG")
-    pdf_file = st.file_uploader("Upload a PDF document", type=["pdf"])
-
-    if pdf_file:
-        st.success("✅ PDF uploaded! Now ask questions below.")
-        query = st.text_input("Ask a question about the document:")
-
-        if st.button("Get Answer"):
-            if query.strip():
-                with st.spinner("Searching inside PDF..."):
-                    reply = answer_query(query, pdf_file)
-                st.success(reply)
-            else:
-                st.warning("Please enter a question.")
 
 # -------------------------------
-# Smart PDF Q&A (RAG + GPT)
+# 3️⃣ PDF / News Q&A (RAG + Groq, simple)
 # -------------------------------
-elif mode == "Smart PDF Q&A":
-    st.header("🧠 Smart PDF Q&A (RAG + GPT)")
-    pdf_file = st.file_uploader("Upload a PDF document", type=["pdf"])
+elif mode == "PDF / News Q&A":
+    st.header("📄 PDF / News Article Q&A with RAG ")
 
-    if pdf_file:
-        st.success("✅ PDF uploaded! Ask with GPT-powered answers.")
-        query = st.text_input("Ask a question about the document:")
+    source_type = st.radio(
+        "Choose source type:",
+        ["PDF document", "News article URL"],
+        horizontal=True,
+    )
 
-        if st.button("Get Smart Answer"):
-            if query.strip():
-                with st.spinner("Thinking with RAG + GPT..."):
-                    # Step 1: Extract + chunk + embed
-                    text = extract_text_from_pdf(pdf_file)
-                    chunks = chunk_text(text)
-                    embeddings = embed_chunks(chunks)
+    pdf_file = None
+    article_url = ""
 
-                    # Step 2: Retrieve context
-                    top_chunks = retrieve_relevant_chunks(query, chunks, embeddings)
-                    context = " ".join(top_chunks)
+    if source_type == "PDF document":
+        pdf_file = st.file_uploader("Upload a PDF document", type=["pdf"])
+        if pdf_file is not None:
+            st.success("✅ PDF uploaded! Now ask a question below.")
+        else:
+            st.info("Upload a PDF to start.")
+    else:
+        article_url = st.text_input("Paste news article URL (e.g., Yahoo Finance, Moneycontrol, etc.):")
+        if article_url.strip():
+            st.success("✅ URL received! Now ask a question about this article below.")
+        else:
+            st.info("Enter a valid article link to start.")
 
-                    # Step 3: Build prompt for GPT
-                    prompt = f"Use the following context to answer:\n\n{context}\n\nQuestion: {query}\n\nAnswer in a clear and concise way."
+    query = st.text_input("Ask a question about this source:")
 
-                    # Step 4: Ask GPT4All
-                    reply = ask_local_gpt4all(prompt)
-
-                st.success(reply)
-            else:
-                st.warning("Please enter a question.")
+    if st.button("Get Answer"):
+        if not query.strip():
+            st.warning("Please enter a question.")
+        elif source_type == "PDF document" and pdf_file is None:
+            st.warning("Please upload a PDF first.")
+        elif source_type == "News article URL" and not article_url.strip():
+            st.warning("Please enter a news article URL first.")
+        else:
+            with st.spinner("Reading and thinking over your source..."):
+                reply = answer_with_rag(
+                    query,
+                    pdf_file=pdf_file if source_type == "PDF document" else None,
+                    article_url=article_url if source_type == "News article URL" else None,
+                )
+            st.success(reply)
 
 
 # -------------------------------
-# Finance Calculators
+# 4️⃣ Smart PDF / News Q&A (same RAG but for complex questions)
+# -------------------------------
+elif mode == "Smart PDF / News Q&A":
+    st.header("🧠 Smart PDF / News Q&A (RAG + LLM)")
+
+  
+
+    source_type = st.radio(
+        "Choose source type:",
+        ["PDF document", "News article URL"],
+        horizontal=True,
+    )
+
+    pdf_file = None
+    article_url = ""
+
+    if source_type == "PDF document":
+        pdf_file = st.file_uploader("Upload a PDF document", type=["pdf"])
+        if pdf_file is not None:
+            st.success("✅ PDF uploaded! Now ask your detailed question.")
+        else:
+            st.info("Upload a PDF to start.")
+    else:
+        article_url = st.text_input("Paste news article URL:")
+        if article_url.strip():
+            st.success("✅ URL received! Now ask your detailed question.")
+        else:
+            st.info("Enter a valid article link to start.")
+
+    query = st.text_input("Ask a complex question about this source:")
+
+    if st.button("Get Smart Answer"):
+        if not query.strip():
+            st.warning("Please enter a question.")
+        elif source_type == "PDF document" and pdf_file is None:
+            st.warning("Please upload a PDF first.")
+        elif source_type == "News article URL" and not article_url.strip():
+            st.warning("Please enter a news article URL first.")
+        else:
+            with st.spinner("thinking"):
+                smart_query = (
+                    query
+                    + "\n\nPlease reason step-by-step and keep it beginner-friendly."
+                )
+                reply = answer_with_rag(
+                    smart_query,
+                    pdf_file=pdf_file if source_type == "PDF document" else None,
+                    article_url=article_url if source_type == "News article URL" else None,
+                )
+            st.success(reply)
+
+
+# -------------------------------
+# 5️⃣ Finance Calculators
 # -------------------------------
 elif mode == "Finance Calculators":
     st.header("🧮 Finance Calculators")
 
     calc_type = st.selectbox(
         "Choose a calculator:",
-        ["Lumpsum Investment", "SIP Investment", "Loan EMI", "Retirement Corpus"]
+        ["Lumpsum Investment", "SIP Investment", "Loan EMI", "Retirement Corpus"],
     )
 
     if calc_type == "Lumpsum Investment":
         p = st.number_input("Initial Investment (₹)", min_value=1000.0, step=1000.0)
-        r = st.number_input("Annual Return Rate (%)", min_value=1.0, max_value=50.0, step=0.5)
+        r = st.number_input(
+            "Annual Return Rate (%)", min_value=1.0, max_value=50.0, step=0.5
+        )
         t = st.number_input("Time (years)", min_value=1, step=1)
         if st.button("Calculate"):
-            st.success(f"Future Value: ₹{lumpsum_investment(p, r, t):,.2f}")
+            fv = lumpsum_investment(p, r, t)
+            st.success(f"Future Value: ₹{fv:,.2f}")
 
     elif calc_type == "SIP Investment":
         p = st.number_input("Monthly Investment (₹)", min_value=500.0, step=500.0)
-        r = st.number_input("Expected Annual Return (%)", min_value=1.0, max_value=50.0, step=0.5)
+        r = st.number_input(
+            "Expected Annual Return (%)", min_value=1.0, max_value=50.0, step=0.5
+        )
         t = st.number_input("Time (years)", min_value=1, step=1)
         if st.button("Calculate SIP"):
-            st.success(f"Future Value: ₹{sip_investment(p, r, t):,.2f}")
+            fv = sip_investment(p, r, t)
+            st.success(f"Future Value: ₹{fv:,.2f}")
 
     elif calc_type == "Loan EMI":
         p = st.number_input("Loan Amount (₹)", min_value=10000.0, step=10000.0)
-        r = st.number_input("Annual Interest Rate (%)", min_value=1.0, max_value=30.0, step=0.5)
+        r = st.number_input(
+            "Annual Interest Rate (%)", min_value=1.0, max_value=30.0, step=0.5
+        )
         t = st.number_input("Tenure (years)", min_value=1, step=1)
         if st.button("Calculate EMI"):
-            st.success(f"Monthly EMI: ₹{loan_emi(p, r, t):,.2f}")
+            emi = loan_emi(p, r, t)
+            st.success(f"Monthly EMI: ₹{emi:,.2f}")
 
     elif calc_type == "Retirement Corpus":
-        exp = st.number_input("Current Monthly Expense (₹)", min_value=1000.0, step=1000.0)
-        infl = st.number_input("Expected Inflation Rate (%)", min_value=1.0, max_value=15.0, step=0.5)
+        exp = st.number_input(
+            "Current Monthly Expense (₹)", min_value=1000.0, step=1000.0
+        )
+        infl = st.number_input(
+            "Expected Inflation Rate (%)", min_value=1.0, max_value=15.0, step=0.5
+        )
         yrs = st.number_input("Years until retirement", min_value=1, step=1)
         if st.button("Calculate Corpus"):
-            st.success(f"Required Retirement Corpus: ₹{retirement_corpus(exp, infl, yrs):,.2f}")
+            corpus = retirement_corpus(exp, infl, yrs)
+            st.success(f"Required Retirement Corpus: ₹{corpus:,.2f}")
+
